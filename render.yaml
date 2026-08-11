@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: transpox-detection
+    runtime: docker
+    dockerfilePath: services/detection/Dockerfile
+    dockerContext: services/detection
+    healthCheckPath: /health
+    envVars:
+      - key: TRANPOX_MODEL
+        value: models/pothole.pt
+      - key: TRANPOX_VEHICLE_MODEL
+        value: models/vehicles.pt
+      - key: TRANPOX_CONFIDENCE
+        value: "0.45"
