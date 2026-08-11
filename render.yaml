@@ -6,9 +6,11 @@ services:
     dockerContext: services/detection
     healthCheckPath: /health
     envVars:
+      - key: HF_SPACE
+        value: Utkarssh/transpox-api
+      - key: TRANPOX_CONFIDENCE
+        value: "0.25"
       - key: TRANPOX_MODEL
         value: models/pothole.pt
       - key: TRANPOX_VEHICLE_MODEL
         value: models/vehicles.pt
-      - key: TRANPOX_CONFIDENCE
-        value: "0.45"
