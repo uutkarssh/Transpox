@@ -22,6 +22,9 @@ type Payload = {
   }>;
 };
 
+type ConnectionStatus = "idle" | "connecting" | "connected" | "error";
+type ModelStatus = "idle" | "loading" | "ready" | "error";
+
 const POTHOLE_SPACE = process.env.NEXT_PUBLIC_HF_SPACE || "Uutkarssh/transpox-api";
 const OBJECT_SPACE = process.env.NEXT_PUBLIC_HF_OBJECTS_SPACE || "Uutkarssh/transpox-objects-api";
 const POTHOLE_API = "/detect_potholes";
@@ -71,6 +74,8 @@ export default function Home() {
   const [running, setRunning] = useState(false);
   const [speed, setSpeed] = useState(0);
   const [detections, setDetections] = useState<Detection[]>([]);
+  const [apiStatus, setApiStatus] = useState<ConnectionStatus>("idle");
+  const [yoloStatus, setYoloStatus] = useState<ModelStatus>("idle");
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -115,12 +120,14 @@ export default function Home() {
   }, [updateSpeed]);
 
   const connectClients = useCallback(async () => {
+    setApiStatus("connecting");
     const [potholes, objects] = await Promise.all([
       potholeClientRef.current ? Promise.resolve(potholeClientRef.current) : Client.connect(POTHOLE_SPACE),
       objectClientRef.current ? Promise.resolve(objectClientRef.current) : Client.connect(OBJECT_SPACE)
     ]);
     potholeClientRef.current = potholes;
     objectClientRef.current = objects;
+    setApiStatus("connected");
     return { potholes, objects };
   }, []);
 
@@ -131,6 +138,7 @@ export default function Home() {
     if (!video || !canvas || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth === 0) return;
 
     inferenceRunningRef.current = true;
+    setYoloStatus("loading");
     try {
       canvas.width = FRAME_WIDTH;
       canvas.height = FRAME_HEIGHT;
@@ -154,10 +162,13 @@ export default function Home() {
         ...payloadDetections(objectData[1], "object", `o-${Date.now()}`)
       ];
       setDetections(next);
+      setYoloStatus("ready");
     } catch (error) {
       console.warn("Transpox inference cycle failed", error);
       potholeClientRef.current = null;
       objectClientRef.current = null;
+      setApiStatus("error");
+      setYoloStatus("error");
     } finally {
       inferenceRunningRef.current = false;
       if (runningRef.current) frameTimerRef.current = window.setTimeout(() => void captureAndDetect(), 350);
@@ -176,6 +187,8 @@ export default function Home() {
     inferenceRunningRef.current = false;
     setRunning(false);
     setDetections([]);
+    setApiStatus("idle");
+    setYoloStatus("idle");
     updateSpeed(0);
   }, [updateSpeed]);
 
@@ -210,6 +223,8 @@ export default function Home() {
   }, [start, stopCamera]);
 
   const potholeCount = detections.filter((item) => item.kind === "pothole").length;
+  const apiLabel = apiStatus === "connecting" ? "CONNECTING" : apiStatus === "connected" ? "CONNECTED" : apiStatus === "error" ? "RECONNECTING" : "OFFLINE";
+  const yoloLabel = yoloStatus === "loading" ? "LOADING" : yoloStatus === "ready" ? "READY" : yoloStatus === "error" ? "RETRYING" : "IDLE";
 
   return (
     <main className="transpox-screen" onClick={() => { if (!runningRef.current) void start(); }}>
@@ -233,6 +248,12 @@ export default function Home() {
           Tap to start camera
         </button>
       )}
+
+      <div className="system-status" aria-label={`API ${apiLabel}, YOLO ${yoloLabel}`}>
+        <span className={`status-item ${apiStatus}`}><b />API {apiLabel}</span>
+        <span className="status-divider" />
+        <span className={`status-item ${yoloStatus}`}><b />YOLO {yoloLabel}</span>
+      </div>
 
       <div className="speed-bar" aria-label={`Current speed ${Math.round(speed)} kilometers per hour`}>
         <span>{Math.round(speed)}</span>
