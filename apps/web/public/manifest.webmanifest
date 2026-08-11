@@ -1,0 +1,9 @@
+{
+  "name": "Transpox",
+  "short_name": "Transpox",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f2f3f1",
+  "theme_color": "#111111",
+  "icons": []
+}
