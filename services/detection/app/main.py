@@ -5,12 +5,15 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .model import detector
 
-app = FastAPI(title="Transpox Detection API", version="0.3.0")
+app = FastAPI(title="Transpox Detection API", version="0.3.1")
+
+# No cookies/authentication are used by this API, so credentials stay disabled.
+# This keeps browser requests from the Vercel frontend CORS-compatible.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -46,7 +49,9 @@ async def detect(
                 "lng": lng,
                 "timestamp": timestamp,
                 "confidence": item["confidence"],
-                "source": "fused" if motion >= detector.motion_threshold else "vision",
+                # Motion is supporting context only; vision remains the
+                # source of the pothole classification.
+                "source": "vision",
                 "box": item["box"],
                 "className": item["class_name"],
             }
