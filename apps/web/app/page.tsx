@@ -44,6 +44,8 @@ export default function Home() {
   const streamRef = useRef<MediaStream | null>(null);
   const lastFrame = useRef(0);
   const startTime = useRef(0);
+  const latestPoint = useRef<Point | null>(null);
+  const latestMotion = useRef(0);
 
   useEffect(() => () => stopRide(), []);
 
@@ -53,23 +55,27 @@ export default function Home() {
     return () => window.clearInterval(id);
   }, [running]);
 
+  // Keep one stable capture loop. GPS and accelerometer updates are read from refs
+  // so frequent sensor events do not constantly destroy/recreate the timer.
   useEffect(() => {
     if (!running) return;
     const id = window.setInterval(captureFrame, 500);
     return () => window.clearInterval(id);
-  }, [running, points, motion]);
+  }, [running]);
 
   useEffect(() => {
     if (!running) return;
     fetch(`${API}/health`, { cache: "no-store" })
-      .then((r) => { setApiOnline(r.ok); })
+      .then((r) => setApiOnline(r.ok))
       .catch(() => setApiOnline(false));
   }, [running]);
 
   function onMotion(event: DeviceMotionEvent) {
     const a = event.accelerationIncludingGravity;
     if (!a) return;
-    setMotion(Math.sqrt((a.x ?? 0) ** 2 + (a.y ?? 0) ** 2 + (a.z ?? 0) ** 2));
+    const value = Math.sqrt((a.x ?? 0) ** 2 + (a.y ?? 0) ** 2 + (a.z ?? 0) ** 2);
+    latestMotion.current = value;
+    setMotion(value);
   }
 
   async function startMotion() {
@@ -82,6 +88,7 @@ export default function Home() {
 
   async function startCamera() {
     try {
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error("Camera API unavailable");
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
       streamRef.current = stream;
       if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
@@ -95,25 +102,31 @@ export default function Home() {
   }
 
   async function captureFrame() {
-    if (!videoRef.current || !canvasRef.current || !points.length || videoRef.current.readyState < 2) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const p = latestPoint.current;
+    if (!video || !canvas || !p || video.readyState < 2) return;
+
     const now = Date.now();
     if (now - lastFrame.current < 1200) return;
     lastFrame.current = now;
-    const video = videoRef.current, canvas = canvasRef.current;
+
     canvas.width = 640;
     canvas.height = Math.max(360, Math.round(640 * video.videoHeight / Math.max(video.videoWidth, 1)));
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", .72));
     if (!blob) return;
-    const p = points.at(-1)!;
+
     const form = new FormData();
     form.append("image", blob, "frame.jpg");
     form.append("lat", String(p.lat));
     form.append("lng", String(p.lng));
     form.append("timestamp", String(p.timestamp));
-    form.append("motion", String(motion));
+    form.append("motion", String(latestMotion.current));
+
     try {
       const r = await fetch(`${API}/detect`, { method: "POST", body: form });
       if (!r.ok) { setApiOnline(false); return; }
@@ -133,9 +146,11 @@ export default function Home() {
   function startRide() {
     if (!navigator.geolocation) return setStatus("GPS is not supported on this device");
     setPoints([]); setPotholes([]); setVehicles([]); setDuration(0); setLastConfidence(0); setApiOnline(null);
+    latestPoint.current = null; latestMotion.current = 0; lastFrame.current = 0;
     setRunning(true); startTime.current = Date.now(); setStatus("Starting GPS + camera…");
     watchId.current = navigator.geolocation.watchPosition((position) => {
       const p = { lat: position.coords.latitude, lng: position.coords.longitude, accuracy: position.coords.accuracy, speed: position.coords.speed ?? undefined, heading: position.coords.heading ?? undefined, timestamp: position.timestamp };
+      latestPoint.current = p;
       setPoints((old) => [...old, p]);
       setSpeed((p.speed ?? 0) * 3.6);
       setStatus((old) => old.startsWith("Detection server") ? old : "Live road scan");
@@ -145,11 +160,12 @@ export default function Home() {
   }
 
   function stopRide() {
-    if (watchId.current !== null) navigator.geolocation.clearWatch(watchId.current);
+    if (watchId.current !== null && navigator.geolocation) navigator.geolocation.clearWatch(watchId.current);
     watchId.current = null;
     window.removeEventListener("devicemotion", onMotion);
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
+    latestPoint.current = null;
     setCameraReady(false);
     setRunning(false);
     setStatus("Ride ended — route summary ready");
