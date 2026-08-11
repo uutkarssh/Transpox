@@ -62,6 +62,7 @@ export default function Home() {
   const streamRef = useRef<MediaStream | null>(null);
   const gradioRef = useRef<any>(null);
   const connectingRef = useRef<Promise<any> | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
   const lastFrame = useRef(0);
   const startTime = useRef(0);
   const latestPoint = useRef<Point | null>(null);
@@ -82,21 +83,54 @@ export default function Home() {
     return () => window.clearInterval(id);
   }, [running]);
 
-  async function getGradioClient() {
+  async function connectToHuggingFace(retries = 3) {
     if (gradioRef.current) return gradioRef.current;
-    if (!connectingRef.current) {
-      connectingRef.current = Client.connect(HF_SPACE).then((client) => {
-        gradioRef.current = client;
-        setApiOnline(true);
-        return client;
-      }).catch((error) => {
-        console.error("Transpox Hugging Face connection failed", error);
-        setApiOnline(false);
-        connectingRef.current = null;
-        throw error;
-      });
-    }
+    if (connectingRef.current) return connectingRef.current;
+
+    setApiOnline(null);
+    setStatus("Waking Transpox AI…");
+
+    connectingRef.current = (async () => {
+      let lastError: unknown;
+      for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+          const client = await Client.connect(HF_SPACE);
+          gradioRef.current = client;
+          setApiOnline(true);
+          setStatus("Transpox AI connected — live road scan");
+          return client;
+        } catch (error) {
+          lastError = error;
+          console.warn(`Transpox HF connection attempt ${attempt}/${retries} failed`, error);
+          gradioRef.current = null;
+          if (attempt < retries) await new Promise((resolve) => window.setTimeout(resolve, 2000 * attempt));
+        }
+      }
+      setApiOnline(false);
+      setStatus("AI is waking up — retrying automatically");
+      throw lastError ?? new Error("Unable to connect to Hugging Face Space");
+    })().finally(() => {
+      connectingRef.current = null;
+    });
+
     return connectingRef.current;
+  }
+
+  function scheduleReconnect() {
+    if (!running || reconnectTimerRef.current !== null) return;
+    reconnectTimerRef.current = window.setTimeout(async () => {
+      reconnectTimerRef.current = null;
+      if (!running) return;
+      try { await connectToHuggingFace(3); } catch { scheduleReconnect(); }
+    }, 5000);
+  }
+
+  function invalidateHuggingFaceConnection() {
+    gradioRef.current = null;
+    connectingRef.current = null;
+    setApiOnline(false);
+    setStatus("AI connection lost — reconnecting…");
+    scheduleReconnect();
   }
 
   function onMotion(event: DeviceMotionEvent) {
@@ -153,7 +187,7 @@ export default function Home() {
     if (!blob) return;
 
     try {
-      const client = await getGradioClient();
+      const client = await connectToHuggingFace(3);
       const result = await client.predict(HF_API, [blob, confidenceRef.current]);
       const data = Array.isArray(result.data) ? result.data : [];
       const annotated = getFileUrl(data[0]);
@@ -173,7 +207,6 @@ export default function Home() {
             confidence: Number(d.confidence ?? 0),
             source: "camera",
             timestamp: p.timestamp,
-            // Model output is normally 640x480; the annotated image is the authoritative visual result.
             box: [x1 / 640, y1 / 480, Math.max(0, x2 - x1) / 640, Math.max(0, y2 - y1) / 480],
             className: "pothole"
           };
@@ -185,8 +218,7 @@ export default function Home() {
       setApiOnline(true);
     } catch (error) {
       console.error("Transpox detection request failed", error);
-      setApiOnline(false);
-      setStatus("Hugging Face detection unavailable — ride tracking continues");
+      invalidateHuggingFaceConnection();
     }
   }
 
@@ -200,16 +232,17 @@ export default function Home() {
       latestPoint.current = p;
       setPoints((old) => [...old, p]);
       setSpeed((p.speed ?? 0) * 3.6);
-      setStatus((old) => old.startsWith("Hugging Face") ? old : "Live road scan");
     }, () => setStatus("GPS permission/error — check location access"), { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 });
     startMotion();
     startCamera();
-    getGradioClient().catch(() => undefined);
+    connectToHuggingFace(3).catch(() => scheduleReconnect());
   }
 
   function stopRide() {
     if (watchId.current !== null && navigator.geolocation) navigator.geolocation.clearWatch(watchId.current);
     watchId.current = null;
+    if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current);
+    reconnectTimerRef.current = null;
     window.removeEventListener("devicemotion", onMotion);
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
@@ -248,10 +281,10 @@ export default function Home() {
       <div className="map-panel"><RideMap points={points} potholes={potholes} vehicles={vehicles} /></div>
     </section>
 
-    <section className="control-bar"><div className="control-main"><button className="start" onClick={running ? stopRide : startRide}>{running ? "End current ride" : "Start a ride"}<span>→</span></button><div className="permission-note"><i />GPS {accuracy ? `${Math.round(accuracy)}m accuracy` : "ready"}<b>·</b> Camera {cameraReady ? "connected" : "standby"}</div></div><div className="connection"><span className={apiOnline === false ? "offline" : apiOnline ? "online" : "checking"} /> Hugging Face API <b>{apiOnline === false ? "Offline" : apiOnline ? "Online" : "Checking"}</b></div></section>
+    <section className="control-bar"><div className="control-main"><button className="start" onClick={running ? stopRide : startRide}>{running ? "End current ride" : "Start a ride"}<span>→</span></button><div className="permission-note"><i />GPS {accuracy ? `${Math.round(accuracy)}m accuracy` : "ready"}<b>·</b> Camera {cameraReady ? "connected" : "standby"}</div></div><div className="connection"><span className={apiOnline === false ? "offline" : apiOnline ? "online" : "checking"} /> Hugging Face API <b>{apiOnline === false ? "Reconnecting" : apiOnline ? "Online" : "Waking"}</b></div></section>
 
     <section className="bottom-stats"><div><span>SPEED</span><b>{speed.toFixed(0)}</b><small>km/h</small></div><div><span>AVG SPEED</span><b>{avgSpeed.toFixed(0)}</b><small>km/h</small></div><div><span>MOTION</span><b>{motion.toFixed(1)}</b><small>sensor signal</small></div><div><span>VEHICLES</span><b>{vehicles.length}</b><small>nearby detections</small></div></section>
 
-    <footer><span>TRANSP<span>O</span>X</span><span>Road detection is informational. Stay focused on the road.</span><span>YOLOv12 · HF GRADIO · v1.1</span></footer>
+    <footer><span>TRANSP<span>O</span>X</span><span>Road detection is informational. Stay focused on the road.</span><span>YOLOv12 · HF GRADIO · v1.2</span></footer>
   </main>;
 }
