@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Client } from "@gradio/client";
 
 type Box = [number, number, number, number];
@@ -60,13 +60,7 @@ function payloadDetections(value: unknown, kind: Detection["kind"], prefix: stri
     const confidence = Number(item.confidence ?? 0);
     const rawLabel = String(item.label ?? item.class ?? (kind === "pothole" ? "pothole" : "object"));
     const label = kind === "pothole" ? "Pothole" : rawLabel.replace(/_/g, " ");
-    return {
-      id: `${prefix}-${index}-${box.join("-")}`,
-      label,
-      confidence,
-      box,
-      kind
-    } satisfies Detection;
+    return { id: `${prefix}-${index}-${box.join("-")}`, label, confidence, box, kind } satisfies Detection;
   }).filter((item): item is Detection => Boolean(item));
 }
 
@@ -76,6 +70,7 @@ export default function Home() {
   const [detections, setDetections] = useState<Detection[]>([]);
   const [apiStatus, setApiStatus] = useState<ConnectionStatus>("idle");
   const [yoloStatus, setYoloStatus] = useState<ModelStatus>("idle");
+  const [cameraError, setCameraError] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -86,11 +81,9 @@ export default function Home() {
   const inferenceRunningRef = useRef(false);
   const runningRef = useRef(false);
   const lastPositionRef = useRef<{ lat: number; lng: number; time: number } | null>(null);
-  const speedRef = useRef(0);
 
   const updateSpeed = useCallback((value: number) => {
     const safe = Number.isFinite(value) && value >= 0 ? Math.min(value, 250) : 0;
-    speedRef.current = safe;
     setSpeed(safe);
   }, []);
 
@@ -103,7 +96,6 @@ export default function Home() {
         lastPositionRef.current = { lat: position.coords.latitude, lng: position.coords.longitude, time: position.timestamp };
         return;
       }
-
       const previous = lastPositionRef.current;
       const current = { lat: position.coords.latitude, lng: position.coords.longitude, time: position.timestamp };
       lastPositionRef.current = current;
@@ -135,7 +127,10 @@ export default function Home() {
     if (!runningRef.current || inferenceRunningRef.current) return;
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth === 0) return;
+    if (!video || !canvas || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth === 0) {
+      if (runningRef.current) frameTimerRef.current = window.setTimeout(() => void captureAndDetect(), 300);
+      return;
+    }
 
     inferenceRunningRef.current = true;
     setYoloStatus("loading");
@@ -143,13 +138,12 @@ export default function Home() {
       canvas.width = FRAME_WIDTH;
       canvas.height = FRAME_HEIGHT;
       const ctx = canvas.getContext("2d", { alpha: false });
-      if (!ctx) return;
+      if (!ctx) throw new Error("Canvas unavailable");
       ctx.drawImage(video, 0, 0, FRAME_WIDTH, FRAME_HEIGHT);
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.72));
-      if (!blob) return;
+      if (!blob) throw new Error("Could not capture camera frame");
 
       const { potholes, objects } = await connectClients();
-
       const [potholeResult, objectResult] = await Promise.all([
         potholes.predict(POTHOLE_API, { image: blob, confidence: CONFIDENCE }),
         objects.predict(OBJECT_API, { image: blob, confidence: CONFIDENCE })
@@ -157,11 +151,10 @@ export default function Home() {
 
       const potholeData = Array.isArray(potholeResult?.data) ? potholeResult.data : [];
       const objectData = Array.isArray(objectResult?.data) ? objectResult.data : [];
-      const next = [
+      setDetections([
         ...payloadDetections(potholeData[1], "pothole", `p-${Date.now()}`),
         ...payloadDetections(objectData[1], "object", `o-${Date.now()}`)
-      ];
-      setDetections(next);
+      ]);
       setYoloStatus("ready");
     } catch (error) {
       console.warn("Transpox inference cycle failed", error);
@@ -171,7 +164,7 @@ export default function Home() {
       setYoloStatus("error");
     } finally {
       inferenceRunningRef.current = false;
-      if (runningRef.current) frameTimerRef.current = window.setTimeout(() => void captureAndDetect(), 350);
+      if (runningRef.current) frameTimerRef.current = window.setTimeout(() => void captureAndDetect(), 700);
     }
   }, [connectClients]);
 
@@ -194,58 +187,60 @@ export default function Home() {
 
   const start = useCallback(async () => {
     if (runningRef.current) return;
+    setCameraError(false);
     try {
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error("Camera API unavailable");
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        },
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
         audio: false
       });
+
+      const video = videoRef.current;
+      if (!video) {
+        stream.getTracks().forEach((track) => track.stop());
+        throw new Error("Camera view unavailable");
+      }
+
       streamRef.current = stream;
-      if (!videoRef.current) throw new Error("Camera view unavailable");
-      videoRef.current.srcObject = stream;
-      await videoRef.current.play();
+      video.srcObject = stream;
+      video.muted = true;
+      video.playsInline = true;
+      await video.play();
       runningRef.current = true;
       setRunning(true);
+      setApiStatus("connecting");
       startGPS();
       void captureAndDetect();
     } catch (error) {
       console.warn("Unable to start camera", error);
-      stopCamera();
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      runningRef.current = false;
+      setRunning(false);
+      setCameraError(true);
     }
-  }, [captureAndDetect, startGPS, stopCamera]);
-
-  useEffect(() => {
-    void start();
-    return () => stopCamera();
-  }, [start, stopCamera]);
+  }, [captureAndDetect, startGPS]);
 
   const potholeCount = detections.filter((item) => item.kind === "pothole").length;
   const apiLabel = apiStatus === "connecting" ? "CONNECTING" : apiStatus === "connected" ? "CONNECTED" : apiStatus === "error" ? "RECONNECTING" : "OFFLINE";
   const yoloLabel = yoloStatus === "loading" ? "LOADING" : yoloStatus === "ready" ? "READY" : yoloStatus === "error" ? "RETRYING" : "IDLE";
 
   return (
-    <main className="transpox-screen" onClick={() => { if (!runningRef.current) void start(); }}>
+    <main className="transpox-screen">
       <video ref={videoRef} className="camera" muted playsInline autoPlay />
       <canvas ref={canvasRef} hidden />
 
       <div className="detection-layer" aria-live="polite">
         {detections.map((item) => (
-          <div
-            key={item.id}
-            className={`detection-box ${item.kind === "pothole" ? "pothole" : "object"}`}
-            style={{ left: `${item.box[0] * 100}%`, top: `${item.box[1] * 100}%`, width: `${item.box[2] * 100}%`, height: `${item.box[3] * 100}%` }}
-          >
+          <div key={item.id} className={`detection-box ${item.kind === "pothole" ? "pothole" : "object"}`} style={{ left: `${item.box[0] * 100}%`, top: `${item.box[1] * 100}%`, width: `${item.box[2] * 100}%`, height: `${item.box[3] * 100}%` }}>
             <span>{item.label} {Math.round(item.confidence * 100)}%</span>
           </div>
         ))}
       </div>
 
       {!running && (
-        <button className="wake" onClick={(event) => { event.stopPropagation(); void start(); }}>
-          Tap to start camera
+        <button type="button" className="wake" onClick={() => void start()}>
+          {cameraError ? "Allow camera & try again" : "Tap to start camera"}
         </button>
       )}
 
