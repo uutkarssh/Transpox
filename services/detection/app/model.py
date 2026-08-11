@@ -74,11 +74,13 @@ class PotholeDetector:
         if self.hf_client is None:
             return []
 
+        from gradio_client import handle_file
+
         with tempfile.NamedTemporaryFile(suffix=".jpg") as tmp:
             tmp.write(image_bytes)
             tmp.flush()
             result = self.hf_client.predict(
-                image=tmp.name,
+                image=handle_file(tmp.name),
                 confidence=float(confidence),
                 api_name="/detect_potholes",
             )
