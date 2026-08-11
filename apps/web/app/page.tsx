@@ -111,16 +111,11 @@ export default function Home() {
     }, () => undefined, { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 });
   }, [updateSpeed]);
 
-  const connectClients = useCallback(async () => {
-    setApiStatus("connecting");
-    const [potholes, objects] = await Promise.all([
-      potholeClientRef.current ? Promise.resolve(potholeClientRef.current) : Client.connect(POTHOLE_SPACE),
-      objectClientRef.current ? Promise.resolve(objectClientRef.current) : Client.connect(OBJECT_SPACE)
-    ]);
-    potholeClientRef.current = potholes;
-    objectClientRef.current = objects;
-    setApiStatus("connected");
-    return { potholes, objects };
+  const connectOne = useCallback(async (space: string, existing: React.MutableRefObject<any>) => {
+    if (existing.current) return existing.current;
+    const client = await Client.connect(space);
+    existing.current = client;
+    return client;
   }, []);
 
   const captureAndDetect = useCallback(async () => {
@@ -128,12 +123,13 @@ export default function Home() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth === 0) {
-      if (runningRef.current) frameTimerRef.current = window.setTimeout(() => void captureAndDetect(), 300);
+      if (runningRef.current) frameTimerRef.current = window.setTimeout(() => void captureAndDetect(), 500);
       return;
     }
 
     inferenceRunningRef.current = true;
     setYoloStatus("loading");
+
     try {
       canvas.width = FRAME_WIDTH;
       canvas.height = FRAME_HEIGHT;
@@ -143,30 +139,55 @@ export default function Home() {
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.72));
       if (!blob) throw new Error("Could not capture camera frame");
 
-      const { potholes, objects } = await connectClients();
-      const [potholeResult, objectResult] = await Promise.all([
-        potholes.predict(POTHOLE_API, { image: blob, confidence: CONFIDENCE }),
-        objects.predict(OBJECT_API, { image: blob, confidence: CONFIDENCE })
-      ]);
+      // Important: do NOT connect/predict both Spaces in parallel. Hugging Face
+      // Spaces may cold-start independently, and a failed second request used
+      // to discard a successful first request. Run them one after another.
+      setApiStatus("connecting");
+      const imageFile = new File([blob], "transpox-frame.jpg", { type: "image/jpeg" });
+      const next: Detection[] = [];
+      let anyApiWorked = false;
 
-      const potholeData = Array.isArray(potholeResult?.data) ? potholeResult.data : [];
-      const objectData = Array.isArray(objectResult?.data) ? objectResult.data : [];
-      setDetections([
-        ...payloadDetections(potholeData[1], "pothole", `p-${Date.now()}`),
-        ...payloadDetections(objectData[1], "object", `o-${Date.now()}`)
-      ]);
-      setYoloStatus("ready");
+      try {
+        const potholes = await connectOne(POTHOLE_SPACE, potholeClientRef);
+        const result = await potholes.predict(POTHOLE_API, {
+          image: imageFile,
+          confidence: CONFIDENCE
+        });
+        const data = Array.isArray(result?.data) ? result.data : [];
+        next.push(...payloadDetections(data[1], "pothole", `p-${Date.now()}`));
+        anyApiWorked = true;
+      } catch (error) {
+        console.warn("Pothole API failed; continuing with object API", error);
+        potholeClientRef.current = null;
+      }
+
+      try {
+        const objects = await connectOne(OBJECT_SPACE, objectClientRef);
+        const result = await objects.predict(OBJECT_API, {
+          image: imageFile,
+          confidence: CONFIDENCE
+        });
+        const data = Array.isArray(result?.data) ? result.data : [];
+        next.push(...payloadDetections(data[1], "object", `o-${Date.now()}`));
+        anyApiWorked = true;
+      } catch (error) {
+        console.warn("Object API failed; continuing with pothole results", error);
+        objectClientRef.current = null;
+      }
+
+      setDetections(next);
+      setApiStatus(anyApiWorked ? "connected" : "error");
+      setYoloStatus(anyApiWorked ? "ready" : "error");
     } catch (error) {
-      console.warn("Transpox inference cycle failed", error);
-      potholeClientRef.current = null;
-      objectClientRef.current = null;
+      console.warn("Transpox frame processing failed", error);
       setApiStatus("error");
       setYoloStatus("error");
     } finally {
       inferenceRunningRef.current = false;
-      if (runningRef.current) frameTimerRef.current = window.setTimeout(() => void captureAndDetect(), 700);
+      // Keep the live camera smooth and avoid hammering the free Spaces.
+      if (runningRef.current) frameTimerRef.current = window.setTimeout(() => void captureAndDetect(), 1200);
     }
-  }, [connectClients]);
+  }, [connectOne]);
 
   const stopCamera = useCallback(() => {
     if (frameTimerRef.current !== null) window.clearTimeout(frameTimerRef.current);
@@ -194,13 +215,11 @@ export default function Home() {
         video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
         audio: false
       });
-
       const video = videoRef.current;
       if (!video) {
         stream.getTracks().forEach((track) => track.stop());
         throw new Error("Camera view unavailable");
       }
-
       streamRef.current = stream;
       video.srcObject = stream;
       video.muted = true;
@@ -208,7 +227,6 @@ export default function Home() {
       await video.play();
       runningRef.current = true;
       setRunning(true);
-      setApiStatus("connecting");
       startGPS();
       void captureAndDetect();
     } catch (error) {
@@ -222,7 +240,7 @@ export default function Home() {
   }, [captureAndDetect, startGPS]);
 
   const potholeCount = detections.filter((item) => item.kind === "pothole").length;
-  const apiLabel = apiStatus === "connecting" ? "CONNECTING" : apiStatus === "connected" ? "CONNECTED" : apiStatus === "error" ? "RECONNECTING" : "OFFLINE";
+  const apiLabel = apiStatus === "connecting" ? "CONNECTING" : apiStatus === "connected" ? "CONNECTED" : apiStatus === "error" ? "RETRYING" : "OFFLINE";
   const yoloLabel = yoloStatus === "loading" ? "LOADING" : yoloStatus === "ready" ? "READY" : yoloStatus === "error" ? "RETRYING" : "IDLE";
 
   return (
