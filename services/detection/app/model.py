@@ -74,7 +74,6 @@ class PotholeDetector:
         if self.hf_client is None:
             return []
 
-        # gradio_client accepts a local file path for an image input.
         with tempfile.NamedTemporaryFile(suffix=".jpg") as tmp:
             tmp.write(image_bytes)
             tmp.flush()
@@ -88,11 +87,7 @@ class PotholeDetector:
             return []
 
         raw_json = result[1]
-        if isinstance(raw_json, dict):
-            payload = raw_json
-        else:
-            payload = json.loads(str(raw_json))
-
+        payload = raw_json if isinstance(raw_json, dict) else json.loads(str(raw_json))
         detections = payload.get("detections", [])
         w, h = image.size
         output = []
@@ -112,14 +107,16 @@ class PotholeDetector:
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         threshold = CONFIDENCE if confidence is None else max(0.05, min(float(confidence), 0.90))
 
-        # Hugging Face is now the primary pothole inference backend. Keep the
-        # local model as a fallback so the service can still run if HF is down.
+        hf_failed = False
         try:
             potholes = self._predict_huggingface(image_bytes, image, threshold)
         except Exception:
             potholes = []
+            hf_failed = True
 
-        if not potholes and self.hf_client is None:
+        # Only fall back to the local model when the HF request actually fails.
+        # A successful HF response with zero detections should remain zero.
+        if hf_failed and self.model is not None:
             potholes = self._predict_local(self.model, image, threshold)
 
         vehicles = self._predict_local(self.vehicle_model, image, 0.40)
