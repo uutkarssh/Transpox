@@ -8,9 +8,9 @@
 }
 
 * { box-sizing: border-box; }
-html, body { width: 100%; height: 100%; margin: 0; background: #000; overflow: hidden; }
+html, body { width: 100%; height: 100%; margin: 0; padding: 0; background: #000; overflow: hidden; }
 body { font-family: 'Space Grotesk', sans-serif; }
-button { font: inherit; cursor: pointer; }
+button { font: inherit; }
 
 .transpox-screen {
   position: fixed;
@@ -25,11 +25,11 @@ button { font: inherit; cursor: pointer; }
 .camera {
   position: absolute;
   inset: 0;
+  z-index: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
   background: #000;
-  z-index: 0;
 }
 
 .detection-layer {
@@ -41,79 +41,117 @@ button { font: inherit; cursor: pointer; }
 
 .detection-box {
   position: absolute;
-  min-width: 36px;
-  min-height: 28px;
-  border: 2px solid rgba(255,255,255,.9);
-  box-shadow: 0 0 0 1px rgba(0,0,0,.4), 0 0 20px rgba(255,255,255,.12);
+  min-width: 28px;
+  min-height: 22px;
+  border: 2px solid rgba(255,255,255,.92);
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.35), 0 0 18px rgba(255,255,255,.14);
 }
-
-.detection-box.pothole { border-color: #d9ff3f; box-shadow: 0 0 0 1px rgba(0,0,0,.45), 0 0 22px rgba(217,255,63,.22); }
-.detection-box.object { border-color: rgba(255,255,255,.9); }
 
 .detection-box span {
   position: absolute;
   left: -2px;
   top: -25px;
   white-space: nowrap;
-  padding: 5px 7px;
+  padding: 4px 7px;
   border-radius: 5px;
-  color: #050505;
-  background: #fff;
-  font-size: 10px;
-  line-height: 1;
-  font-weight: 700;
-  letter-spacing: .2px;
-  text-transform: uppercase;
-}
-
-.detection-box.pothole span { background: #d9ff3f; }
-
-.speed-bar {
-  position: absolute;
-  z-index: 5;
-  left: 50%;
-  bottom: max(24px, env(safe-area-inset-bottom));
-  transform: translateX(-50%);
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-  min-width: 145px;
-  justify-content: center;
-  padding: 13px 23px 14px;
-  border: 1px solid rgba(255,255,255,.22);
-  border-radius: 999px;
-  background: rgba(18,18,18,.42);
-  box-shadow: 0 12px 45px rgba(0,0,0,.32), inset 0 1px 0 rgba(255,255,255,.12);
-  backdrop-filter: blur(22px) saturate(140%);
-  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  background: rgba(0,0,0,.55);
+  border: 1px solid rgba(255,255,255,.18);
   color: #fff;
-  user-select: none;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: .1px;
+  backdrop-filter: blur(10px) saturate(130%);
+  -webkit-backdrop-filter: blur(10px) saturate(130%);
 }
 
-.speed-bar span { font-size: 28px; line-height: 1; font-weight: 600; letter-spacing: -1.5px; }
-.speed-bar small { font-size: 11px; line-height: 1; font-weight: 500; opacity: .65; letter-spacing: .5px; }
-.speed-bar i { width: 6px; height: 6px; margin-left: 8px; border-radius: 50%; background: #d9ff3f; box-shadow: 0 0 12px #d9ff3f; }
+.detection-box.pothole {
+  border-color: #ff4d4d;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.35), 0 0 18px rgba(255,77,77,.18);
+}
+
+.detection-box.pothole span {
+  background: rgba(255,55,55,.72);
+  border-color: rgba(255,130,130,.35);
+}
+
+.detection-box.object {
+  border-color: rgba(255,255,255,.9);
+}
 
 .wake {
   position: absolute;
-  z-index: 6;
+  z-index: 5;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
   border: 1px solid rgba(255,255,255,.25);
   border-radius: 999px;
-  padding: 12px 18px;
+  padding: 13px 20px;
   color: #fff;
-  background: rgba(20,20,20,.5);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  font-size: 12px;
+  background: rgba(20,20,20,.35);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 14px;
   font-weight: 600;
 }
 
+.speed-bar {
+  position: absolute;
+  z-index: 10;
+  left: 50%;
+  bottom: max(18px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  width: min(430px, calc(100vw - 28px));
+  height: 68px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 24px;
+  border: 1px solid rgba(255,255,255,.22);
+  border-radius: 999px;
+  background: rgba(28,28,28,.32);
+  box-shadow: 0 12px 40px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.12);
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  color: #fff;
+  font-family: 'Space Grotesk', sans-serif;
+}
+
+.speed-bar span {
+  font-size: 30px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: -1.5px;
+}
+
+.speed-bar small {
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  opacity: .72;
+  letter-spacing: .2px;
+}
+
+.speed-bar i {
+  position: absolute;
+  right: 22px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ff4d4d;
+  box-shadow: 0 0 0 5px rgba(255,77,77,.12), 0 0 16px rgba(255,77,77,.65);
+}
+
 @media (max-width: 600px) {
-  .speed-bar { bottom: max(18px, env(safe-area-inset-bottom)); min-width: 132px; padding: 11px 20px 12px; }
-  .speed-bar span { font-size: 25px; }
-  .speed-bar small { font-size: 10px; }
-  .detection-box span { font-size: 9px; padding: 4px 6px; top: -22px; }
+  .speed-bar {
+    width: calc(100vw - 28px);
+    height: 64px;
+  }
+  .speed-bar span { font-size: 28px; }
+  .detection-box span { font-size: 10px; }
 }
