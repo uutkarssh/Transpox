@@ -9,6 +9,8 @@ html {
   scroll-padding-top: 80px;
 }
 body {
+  /* Poppins supports Devanagari (U+0900-097F) — used for BOTH Latin & Hindi text.
+     Noto Sans Devanagari kept as fallback only for any rare glyphs Poppins lacks. */
   font-family: 'Poppins', 'Noto Sans Devanagari', sans-serif;
   font-size: 16px;
   line-height: 1.7;
@@ -17,9 +19,7 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
-:lang(hi), [lang="hi"] {
-  font-family: 'Noto Sans Devanagari', 'Poppins', sans-serif;
-}
+/* All text (English + Hindi) renders in Poppins as the primary font */
 
 /* ============ COLOR VARIABLES ============ */
 :root {
