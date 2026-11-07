@@ -1,7 +1,0 @@
-fastapi==0.116.1
-uvicorn[standard]==0.35.0
-python-multipart==0.0.20
-Pillow==11.3.0
-numpy==2.3.2
-ultralytics==8.3.170
-gradio_client>=1.13.0,<2.0.0
